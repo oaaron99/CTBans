@@ -2,11 +2,14 @@
 #include <colors_csgo>
 
 #define CHAT_PREFIX "{green}[ {red}LG{green} ] {default}"
-#define RAGE_MIN_LENGTH 5
+#define RAGE_MIN_LENGTH 10
+
+#define PRISONER_TEAM 2
 #define GUARD_TEAM 3
 
 enum BanHandler {
 
+	iID,
 	iCount,
 	iCreated,
 	iLength,
@@ -25,6 +28,7 @@ enum RageHandler {
 }
 
 Handle g_hDB = null;
+Handle g_hCTBanTracker[MAXPLAYERS+1];
 
 char g_sRestrictedSound[] = "buttons/button11.wav";
 
@@ -51,12 +55,15 @@ public void OnPluginStart() {
 
 	// Hook Events
 	AddCommandListener(Event_OnJoinTeam, "jointeam");
+	HookEvent("player_spawn", Event_PlayerSpawn);
 
 	// Player Commands
 	RegConsoleCmd("sm_isbanned", CMD_IsBanned);
 
 	// Admin Commands
 	RegAdminCmd("sm_ctban", CMD_CTBan, ADMFLAG_BAN);
+	RegAdminCmd("sm_unctban", CMD_UnCTBan, ADMFLAG_BAN);
+	RegAdminCmd("sm_ragectban", CMD_RageCTBan, ADMFLAG_BAN);
 
 	// Load Translations
 	LoadTranslations("common.phrases");
@@ -154,11 +161,12 @@ public void GetCTBanData(Handle owner, Handle hndl, const char[] error, any user
 
 	}
 
-	g_iBanInfo[client][iCreated] = SQL_FetchInt(hndl, 0);
-	g_iBanInfo[client][iLength] = SQL_FetchInt(hndl, 1);
-	g_iBanInfo[client][iTimeLeft] = SQL_FetchInt(hndl, 2);
-	SQL_FetchString(hndl, 3, g_iBanInfo[client][sReason], 64);
-	SQL_FetchString(hndl, 4, g_iBanInfo[client][sAdmin], 120);
+	g_iBanInfo[client][iID] = SQL_FetchInt(hndl, 0);
+	g_iBanInfo[client][iCreated] = SQL_FetchInt(hndl, 1);
+	g_iBanInfo[client][iLength] = SQL_FetchInt(hndl, 2);
+	g_iBanInfo[client][iTimeLeft] = SQL_FetchInt(hndl, 3);
+	SQL_FetchString(hndl, 4, g_iBanInfo[client][sReason], 64);
+	SQL_FetchString(hndl, 5, g_iBanInfo[client][sAdmin], 120);
 
 	g_bAuthorized[client] = true;
 
@@ -222,8 +230,8 @@ public void OnMapStart() {
 	for (int i = 0; i < g_iRageCount; i++) {
 
 		g_iRageInfo[i][iUserID] = 0;
-		FormatEx(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
-		FormatEx(g_iRageInfo[i][sSteam], 64, "");
+		Format(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
+		Format(g_iRageInfo[i][sSteam], 64, "");
 
 	}
 
@@ -265,10 +273,10 @@ public void OnClientPostAdminCheck(int client) {
 
 	int userid = GetClientUserId(client);
 
-	FormatEx(query, sizeof(query), "SELECT `created`, `length`, `timeleft`, `reason`, `admin_name` FROM `ctbans` WHERE `perp_steamid` = '%s' AND `removed` = 'N' LIMIT 1;", steamid);
+	Format(query, sizeof(query), "SELECT `id`, `created`, `length`, `timeleft`, `reason`, `admin_name` FROM `ctbans` WHERE `perp_steamid` = '%s' AND `removed` = 'N' LIMIT 1;", steamid);
 	SQL_TQuery(g_hDB, GetCTBanData, query, userid, DBPrio_High);
 
-	FormatEx(query, sizeof(query), "SELECT COUNT(*) FROM `ctbans` WHERE `perp_steamid` = '%s'", steamid);
+	Format(query, sizeof(query), "SELECT COUNT(*) FROM `ctbans` WHERE `perp_steamid` = '%s'", steamid);
 	SQL_TQuery(g_hDB, GetCTBanCount, query, userid, DBPrio_Low);
 
 	for (int i = 0; i < g_iRageCount; i++) {
@@ -280,8 +288,8 @@ public void OnClientPostAdminCheck(int client) {
 		}
 
 		g_iRageInfo[i][iUserID] = 0;
-		FormatEx(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
-		FormatEx(g_iRageInfo[i][sSteam], 64, "");
+		Format(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
+		Format(g_iRageInfo[i][sSteam], 64, "");
 		g_iRageCount--;
 
 		break;
@@ -304,14 +312,28 @@ public void OnClientDisconnect(int client) {
 
 	}
 
+	char steamid[64];
+	GetClientAuthId(client, AuthId_Engine, steamid, sizeof(steamid));
+
+	if (g_iBanInfo[client][iTimeLeft] > -1) {
+
+		char query[512];
+		Format(query, sizeof(query), "UPDATE `ctbans` SET `timeleft`= %i WHERE `perp_steamid` = '%s' AND `id` = %i;", g_iBanInfo[client][iTimeLeft], steamid, g_iBanInfo[client][iID]);
+		SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
+
+	} else {
+
+		g_iRageInfo[g_iRageCount][iUserID] = GetClientUserId(client);
+		GetClientName(client, g_iRageInfo[g_iRageCount][sName], MAX_NAME_LENGTH);
+		strcopy(g_iRageInfo[g_iRageCount][sSteam], 64, steamid);
+
+		g_iRageCount++;
+
+		CreateTimer(RAGE_MIN_LENGTH * 60.0, RemoveRageInfo_Timer,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+
+	}
+
 	ResetPlayer(client);
-
-	g_iRageInfo[g_iRageCount][iUserID] = GetClientUserId(client);
-	GetClientName(client, g_iRageInfo[g_iRageCount][sName], MAX_NAME_LENGTH);
-	GetClientAuthId(client, AuthId_Engine, g_iRageInfo[g_iRageCount][sSteam], 64);
-	g_iRageCount++;
-
-	CreateTimer(RAGE_MIN_LENGTH * 60.0, RemoveRageInfo,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
 
 }
 
@@ -341,7 +363,7 @@ public Action Event_OnJoinTeam(int client, const char[] szCommand, int iArgCount
 
 	}
 
-	if (g_iBanInfo[client][iTimeLeft] < 1) {
+	if (g_iBanInfo[client][iTimeLeft] < 0) {
 
 		return Plugin_Continue;
 
@@ -356,9 +378,36 @@ public Action Event_OnJoinTeam(int client, const char[] szCommand, int iArgCount
 	}
 
 	ClientCommand(client, "play %s", g_sRestrictedSound);
-	CPrintToChat(client, CHAT_PREFIX ... "You are CT Banned for {blue}%i{default} more minutes by {purple}%s{default} for {orange}%s{default}", RoundToCeil(g_iBanInfo[client][iTimeLeft] / 60.0), g_iBanInfo[client][sAdmin], g_iBanInfo[client][sReason]);
+
+	char formattedLength[32], formattedTimeLeft[32];
+	FormatSeconds(g_iBanInfo[client][iLength], formattedLength, sizeof(formattedLength), false);
+	FormatSeconds(g_iBanInfo[client][iTimeLeft], formattedTimeLeft, sizeof(formattedTimeLeft), true);
+
+	CPrintToChat(client, CHAT_PREFIX ... "You are CT Banned %s by {purple}%s{default} for {orange}%s{default}. %s remaining", formattedLength, g_iBanInfo[client][sAdmin], g_iBanInfo[client][sReason], formattedTimeLeft);
 
 	return Plugin_Handled;
+
+}
+
+public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast) {
+
+	int client = GetClientOfUserId(event.GetInt("userid"));
+
+	if (!IsValidClient(client)) {
+
+		return Plugin_Continue;
+
+	}
+
+	if (g_iBanInfo[client][iTimeLeft] < 1) {
+
+		return Plugin_Continue;
+
+	}
+
+	g_hCTBanTracker[client] = CreateTimer(1.0, CTBanTracker_Timer, event.GetInt("userid"), TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+
+	return Plugin_Continue;
 
 }
 
@@ -388,14 +437,18 @@ public Action CMD_IsBanned(int client, int args) {
 
 	}
 
-	if (g_iBanInfo[target][iTimeLeft] < 1) {
+	if (g_iBanInfo[target][iTimeLeft] < 0) {
 
 		CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is not CT Banned", target);
 		return Plugin_Handled;
 
 	}
 
-	CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is CT Banned for %i more minutes by %s for %s", target, RoundToCeil(g_iBanInfo[target][iTimeLeft] / 60.0), g_iBanInfo[target][sAdmin], g_iBanInfo[target][sReason]);
+	char formattedLength[32], formattedTimeLeft[32];
+	FormatSeconds(g_iBanInfo[client][iLength], formattedLength, sizeof(formattedLength), false);
+	FormatSeconds(g_iBanInfo[client][iTimeLeft], formattedTimeLeft, sizeof(formattedTimeLeft), true);
+
+	CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is CT Banned %s by {purple}%s{default} for {orange}%s{default}. %s remaining", target, formattedLength, g_iBanInfo[target][sAdmin], g_iBanInfo[target][sReason], formattedTimeLeft);
 	return Plugin_Handled;
 
 }
@@ -441,7 +494,7 @@ public Action CMD_CTBan(int client, int args) {
 
 	}
 
-	if (g_iBanInfo[target][iTimeLeft] > 0) {
+	if (g_iBanInfo[target][iTimeLeft] > -1) {
 
 		CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is already CT Banned", target);
 		return Plugin_Handled;
@@ -513,6 +566,81 @@ public Action CMD_CTBan(int client, int args) {
 
 }
 
+public Action CMD_UnCTBan(int client, int args) {
+
+	// Accepted inputs:
+	// !unctban <player>
+
+	if (args != 1) {
+
+		CReplyToCommand(client, CHAT_PREFIX ... "Usage: !unctban <player>");
+		return Plugin_Handled;
+
+	}
+
+	char arg1[MAX_NAME_LENGTH];
+	GetCmdArg(1, arg1, sizeof(arg1));
+
+	int target = FindTarget(client, arg1, true, false);
+
+	if (!IsValidClient(target)) {
+
+		CReplyToCommand(client, CHAT_PREFIX ... "Not a valid target");
+		return Plugin_Handled;
+
+	}
+
+	if (g_iBanInfo[target][iTimeLeft] < 0) {
+
+		CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is not CT Banned", target);
+		return Plugin_Handled;
+
+	}
+
+	char query[512], steamid[64];
+	GetClientAuthId(target, AuthId_Engine, steamid, sizeof(steamid));
+
+	Format(query, sizeof(query), "UPDATE `ctbans` SET `timeleft`= -1,`removed`= 'R' WHERE `perp_steamid` = '%s' AND `id` = %i;", steamid, g_iBanInfo[target][iID]);
+	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
+
+	g_iBanInfo[target][iCreated] = 0;
+	g_iBanInfo[target][iLength] = -1;
+	g_iBanInfo[target][iTimeLeft] = -1;
+	Format(g_iBanInfo[target][sAdmin], 64, "");
+	Format(g_iBanInfo[target][sReason], 120, "");
+
+	CPrintToChatAll(CHAT_PREFIX ... "{purple}%N{default} has removed {purple}%N's{default} CT Ban", client, target);
+
+	return Plugin_Handled;
+
+}
+
+public Action CMD_RageCTBan(int client, int args) {
+
+	Menu menu = new Menu(CTBanLengthMenuHandler);
+	menu.SetTitle("Rage CT Ban\nChoose a Player:");
+
+	char nameString[MAX_NAME_LENGTH+64];
+
+	int count = 0;
+	for (int i = 0; i < g_iRageCount; i++) {
+
+		Format(nameString, sizeof(nameString), "%s [%s]", g_iRageInfo[i][sName], g_iRageInfo[i][sSteam]);
+		menu.AddItem(g_iRageInfo[i][sSteam], nameString);
+
+	}
+
+	if (count == 0) {
+
+		CPrintToChat(client, CHAT_PREFIX ... "There are no players to rage CT Ban");
+		return;
+
+	}
+
+	menu.Display(client, 0);	
+
+}
+
 // [ MENU HANDLERS ] //
 
 public int CTBanPlayerMenuHandler(Menu menu, MenuAction action, int param1, int param2) {
@@ -550,7 +678,7 @@ public int CTBanLengthMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 		char useridString[4], timeString[12];
 		menu.GetItem(0, useridString, sizeof(useridString));
-		menu.GetItem(1, timeString, sizeof(timeString));
+		menu.GetItem(param2, timeString, sizeof(timeString));
 
 		int target = GetClientOfUserId(StringToInt(useridString));
 
@@ -626,7 +754,65 @@ public int CTBanReasonMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 // [ TIMER CALLBACKS ] //
 
-public Action RemoveRageInfo(Handle timer, int userid) {
+public Action CTBanTracker_Timer(Handle timer, int userid) {
+
+	int client = GetClientOfUserId(userid);
+
+	if (!IsValidClient(client)) {
+
+		g_hCTBanTracker[client] = null;
+		return Plugin_Stop;
+
+	}
+	
+	if (g_hCTBanTracker[client] == null) {
+
+		return Plugin_Stop;
+
+	}
+
+	if (!IsPlayerAlive(client)) {
+
+		g_hCTBanTracker[client] = null;
+		return Plugin_Stop;
+
+	}
+
+	if (g_iBanInfo[client][iTimeLeft] < 0) {
+
+		g_hCTBanTracker[client] = null;
+		return Plugin_Stop;
+
+	}
+
+	g_iBanInfo[client][iTimeLeft]--;
+
+	if (g_iBanInfo[client][iTimeLeft] < 1) {
+
+		char query[512], steamid[64];
+		GetClientAuthId(client, AuthId_Engine, steamid, sizeof(steamid));
+
+		Format(query, sizeof(query), "UPDATE `ctbans` SET `timeleft`= -1,`removed`= 'E' WHERE `perp_steamid` = '%s' AND `id` = %i;", steamid, g_iBanInfo[client][iID]);
+		SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
+
+		g_iBanInfo[client][iCreated] = 0;
+		g_iBanInfo[client][iLength] = -1;
+		g_iBanInfo[client][iTimeLeft] = -1;
+		Format(g_iBanInfo[client][sAdmin], 64, "");
+		Format(g_iBanInfo[client][sReason], 120, "");
+
+		CPrintToChatAll(CHAT_PREFIX ... "{purple}%N's{default} CT Ban has expired", client);
+
+		g_hCTBanTracker[client] = null;
+		return Plugin_Stop;
+
+	}
+
+	return Plugin_Continue;
+
+}
+
+public Action RemoveRageInfo_Timer(Handle timer, int userid) {
 
 	for (int i = 0; i < g_iRageCount; i++) {
 
@@ -637,8 +823,8 @@ public Action RemoveRageInfo(Handle timer, int userid) {
 		}
 
 		g_iRageInfo[i][iUserID] = 0;
-		FormatEx(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
-		FormatEx(g_iRageInfo[i][sSteam], 64, "");
+		Format(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
+		Format(g_iRageInfo[i][sSteam], 64, "");
 		g_iRageCount--;
 
 		break;
@@ -654,7 +840,7 @@ public Action RemoveRageInfo(Handle timer, int userid) {
 public void CTBanPlayerMenu(int client) {
 
 	Menu menu = new Menu(CTBanPlayerMenuHandler);
-	menu.SetTitle("CT Bans\n Choose a Player:");
+	menu.SetTitle("CT Ban\nChoose a Player:");
 
 	char useridString[4], userName[MAX_NAME_LENGTH];
 
@@ -667,9 +853,9 @@ public void CTBanPlayerMenu(int client) {
 	
 		}
 
-		if (client == i ) {
+		if (client == i) {
 
-			continue;
+			//continue;
 
 		}
 
@@ -679,7 +865,7 @@ public void CTBanPlayerMenu(int client) {
 
 		}
 
-		if (g_iBanInfo[i][iTimeLeft] > 0) {
+		if (g_iBanInfo[i][iTimeLeft] > -1) {
 
 			continue;
 			
@@ -706,7 +892,7 @@ public void CTBanPlayerMenu(int client) {
 public void CTBanLengthMenu(int client, int target) {
 
 	Menu menu = new Menu(CTBanLengthMenuHandler);
-	menu.SetTitle("CT Bans\n Choose a Length:");
+	menu.SetTitle("CT Ban\nChoose a Length:");
 
 	char useridString[4];
 	IntToString(GetClientUserId(target), useridString, sizeof(useridString));
@@ -727,7 +913,7 @@ public void CTBanLengthMenu(int client, int target) {
 public void CTBanReasonMenu(int client, int target, int time) {
 
 	Menu menu = new Menu(CTBanReasonMenuHandler);
-	menu.SetTitle("CT Bans\n Choose a Reason:");
+	menu.SetTitle("CT Ban\nChoose a Reason:");
 
 	char useridString[4], timeString[12];
 	IntToString(GetClientUserId(target), useridString, sizeof(useridString));
@@ -762,7 +948,7 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 
 	}
 
-	if (g_iBanInfo[target][iTimeLeft] > 0) {
+	if (g_iBanInfo[target][iTimeLeft] > -1) {
 
 		CPrintToChat(client, CHAT_PREFIX ... "{purple}%N{default} is already CT Banned", target);
 		return;
@@ -778,7 +964,7 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 
 	if (strlen(reason) == 0) {
 
-		FormatEx(reason, 120, "Breaking Rules");
+		Format(reason, 120, "Breaking Rules");
 
 	}
 
@@ -806,8 +992,58 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 	}
 
 	char query[512];
-	FormatEx(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, %i, %i, 'N', '%s')", targetSteamid, adminSteamid, adminName, g_iBanInfo[target][iCreated], time, time, g_iBanInfo[target][sReason]);
+	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, %i, %i, 'N', '%s')", targetSteamid, adminSteamid, adminName, g_iBanInfo[target][iCreated], time, time, g_iBanInfo[target][sReason]);
 	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
+
+	if (GetClientTeam(target) == GUARD_TEAM) {
+
+		ChangeClientTeam(target, PRISONER_TEAM);
+
+	}
+	
+	char formattedLength[32];
+	FormatSeconds(time, formattedLength, sizeof(formattedLength), false);
+	CPrintToChatAll(CHAT_PREFIX ... "{purple}%N{default} has CT Banned {purple}%N{default} %s for {orange}%s{default}", client, target, formattedLength, reason);
+
+}
+
+public void FormatSeconds(int seconds, char[] str, int len, bool timeleft) {
+
+	if (seconds == 0) {
+
+		if (timeleft) {
+
+			Format(str, len, "{red}Indefinite{default} time");
+
+		} else {
+
+			Format(str, len, "{red}permanently{default}");
+
+		}
+
+	} else if (seconds < 60) {
+
+		Format(str, len, "{blue}%i{default} second%s", seconds, seconds > 1 ? "s" : "");
+
+	} else if (seconds < 3600) {
+
+		Format(str, len, "{blue}%i{default} minute%s", RoundFloat(seconds / 60.0), RoundFloat(seconds / 60.0) == 1 ? "" : "s");
+
+	} else if (seconds < 86400) {
+
+		Format(str, len, "{blue}%i{default} hour%s", RoundFloat(seconds / 3600.0), seconds / RoundFloat(seconds / 3600.0) == 1 ? "" : "s");
+
+	} else if (seconds >= 86400) {
+
+		Format(str, len, "{blue}%i{default} day%s", RoundFloat(seconds / 86400.0), RoundFloat(seconds / 86400.0) == 1 ? "" : "s");
+
+	}
+
+	if (!timeleft && seconds > 0) {
+
+		Format(str, len, "for %s", str);
+
+	}
 
 }
 
@@ -817,10 +1053,10 @@ public void ResetPlayer(int client) {
 
 	g_iBanInfo[client][iCount] = 0;
 	g_iBanInfo[client][iCreated] = 0;
-	g_iBanInfo[client][iLength] = 0;
-	g_iBanInfo[client][iTimeLeft] = 0;
-	FormatEx(g_iBanInfo[client][sAdmin], 64, "");
-	FormatEx(g_iBanInfo[client][sReason], 120, "");
+	g_iBanInfo[client][iLength] = -1;
+	g_iBanInfo[client][iTimeLeft] = -1;
+	Format(g_iBanInfo[client][sAdmin], 64, "");
+	Format(g_iBanInfo[client][sReason], 120, "");
 
 }
 
