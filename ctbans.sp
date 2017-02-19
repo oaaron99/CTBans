@@ -49,8 +49,8 @@ public Plugin myinfo = {
 
 	name = "CT Bans",
 	author = "Addicted",
-	version = "1.2",
-	url = "oaaron.com"
+	version = "1.3",
+	url = "addict.services"
 
 };
 
@@ -61,6 +61,7 @@ public void OnPluginStart() {
 
 	// Hook Events
 	AddCommandListener(Event_OnJoinTeam, "jointeam");
+	HookEvent("player_spawn", Event_PlayerSpawn);
 	HookEvent("player_spawn", Event_PlayerSpawn);
 
 	// Player Commands
@@ -73,8 +74,10 @@ public void OnPluginStart() {
 	RegAdminCmd("sm_ragectban", CMD_RageCTBan, ADMFLAG_BAN);
 
 	// Create ConVars
-	g_cChatPrefix = CreateConVar("ctbans_g_sChatPrefix", "[SM] ", "Chat prefix to use for all messages (Include space at end)"); 
+	g_cChatPrefix = CreateConVar("ctbans_chat_prefix", "[SM] ", "Chat prefix to use for all messages (Include space at end)"); 
 	g_cRageLength = CreateConVar("ctbans_rage_length", "10", "Amount of minutes to keep a player in the rage ct ban menu");
+
+	AutoExecConfig(true, "ctbans");
 
 	g_cChatPrefix.AddChangeHook(OnConVarChanged);
 	g_cRageLength.AddChangeHook(OnConVarChanged);
@@ -83,7 +86,6 @@ public void OnPluginStart() {
 	g_iRageLength = g_cRageLength.IntValue;
 
 	// Load Translations
-	LoadTranslations("ctbans.phrases");
 	LoadTranslations("common.phrases");
 
 }
@@ -269,7 +271,7 @@ public void GetCTBanCount(Handle owner, Handle hndl, const char[] error, any use
 
 		}
 
-		CPrintToChat(i, "%s%T", g_sChatPrefix, "Previous CT Bans", client, g_iBanInfo[client][iCount]);
+		CPrintToChat(i, "%sWARNING: {purple}%N{default} has {blue}%i{default} previous CT Bans", g_sChatPrefix, client, g_iBanInfo[client][iCount]);
 
 	}
 
@@ -343,6 +345,8 @@ public void OnClientPostAdminCheck(int client) {
 		Format(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
 		Format(g_iRageInfo[i][sSteam], 64, "");
 		g_iRageCount--;
+
+		PrintToChatAll("Removed rage info from %N", client);
 
 		break;
 
@@ -854,7 +858,7 @@ public int RageCTBanMenuHandler(Menu menu, MenuAction action, int param1, int pa
 	if (action == MenuAction_Select) {
 
 		char steamid[64];
-		menu.GetItem(0, steamid, sizeof(steamid));
+		menu.GetItem(param2, steamid, sizeof(steamid));
 
 		PerformOfflineCTBan(param1, steamid);
 
@@ -1175,7 +1179,7 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 		ChangeClientTeam(target, PRISONER_TEAM);
 
 	}
-	
+
 	char formattedLength[32];
 	FormatSeconds(time, formattedLength, sizeof(formattedLength), false);
 	CPrintToChatAll("%s{purple}%N{default} has CT Banned {purple}%N{default} %s for {orange}%s{default}", g_sChatPrefix, client, target, formattedLength, reason);
@@ -1204,6 +1208,12 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 	int target = -1;
 	char tempSteam[64];
 	for (int i; i < MaxClients; i++) {
+
+		if (!IsValidClient(i)) {
+
+			continue;
+
+		}
 
 		GetClientAuthId(i, AuthId_Engine, tempSteam, sizeof(tempSteam));
 
@@ -1240,7 +1250,7 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, 0, 0, 'N', 'Breaking Rules')", targetSteamid, adminSteamid, adminName, GetTime());
 	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
 
-	CPrintToChat(client, "%sYou have CT Banned {orange}%s{default} {red}permanently{default}", g_sChatPrefix, targetSteamid);
+	CPrintToChat(client, "%sYou have CT Banned {orange}%s{default} permanently", g_sChatPrefix, targetSteamid);
 	return;
 
 }
