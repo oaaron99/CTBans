@@ -52,7 +52,7 @@ public Plugin myinfo = {
 
 	name = "CT Bans",
 	author = "Addicted",
-	version = "1.3",
+	version = "1.4",
 	url = "addict.services"
 
 };
