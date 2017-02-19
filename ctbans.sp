@@ -33,6 +33,7 @@ Handle g_hCTBanTracker[MAXPLAYERS+1];
 char g_sRestrictedSound[] = "buttons/button11.wav";
 
 bool g_bAuthorized[MAXPLAYERS+1];
+bool g_bFirstSpawn[MAXPLAYERS+1];
 
 int g_iBanInfo[MAXPLAYERS+1][BanHandler];
 int g_iRageInfo[MAXPLAYERS+1][RageHandler];
@@ -43,7 +44,7 @@ public Plugin myinfo = {
 
 	name = "CT Bans",
 	author = "Addicted",
-	version = "1.0",
+	version = "1.1",
 	url = "oaaron.com"
 
 };
@@ -63,6 +64,7 @@ public void OnPluginStart() {
 	// Admin Commands
 	RegAdminCmd("sm_ctban", CMD_CTBan, ADMFLAG_BAN);
 	RegAdminCmd("sm_unctban", CMD_UnCTBan, ADMFLAG_BAN);
+	RegAdminCmd("sm_offlinectban", CMD_OfflineCTBan, ADMFLAG_BAN);
 	RegAdminCmd("sm_ragectban", CMD_RageCTBan, ADMFLAG_BAN);
 
 	// Load Translations
@@ -306,12 +308,6 @@ public void OnClientDisconnect(int client) {
 
 	}
 
-	if (GetClientTeam(client) != GUARD_TEAM) {
-
-		return;
-
-	}
-
 	char steamid[64];
 	GetClientAuthId(client, AuthId_Engine, steamid, sizeof(steamid));
 
@@ -405,6 +401,20 @@ public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadca
 
 	}
 
+	if (!g_bFirstSpawn[client]) {
+
+		FakeClientCommand(client, "sm_isbanned");
+		g_bFirstSpawn[client] = true;
+
+	}
+
+	if (g_hCTBanTracker[client] != null) {
+
+		KillTimer(g_hCTBanTracker[client]);
+		g_hCTBanTracker[client] = null;
+
+	}
+
 	g_hCTBanTracker[client] = CreateTimer(1.0, CTBanTracker_Timer, event.GetInt("userid"), TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
 
 	return Plugin_Continue;
@@ -416,19 +426,22 @@ public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadca
 public Action CMD_IsBanned(int client, int args) {
 
 	// Accepted inputs:
+	// !isbanned
 	// !isbanned <player>
 
-	if (args != 1) {
+	int target = -1;
+	if (args == 0) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Usage: !isbanned <player>");
-		return Plugin_Handled;
+		target = client;
 
+	} else {
+
+		char arg1[MAX_NAME_LENGTH];
+		GetCmdArg(1, arg1, sizeof(arg1));
+
+		target = FindTarget(client, arg1, true, false);
+	
 	}
-
-	char arg1[MAX_NAME_LENGTH];
-	GetCmdArg(1, arg1, sizeof(arg1));
-
-	int target = FindTarget(client, arg1, true, false);
 
 	if (!IsValidClient(target)) {
 
@@ -615,29 +628,47 @@ public Action CMD_UnCTBan(int client, int args) {
 
 }
 
+public Action CMD_OfflineCTBan(int client, int args) {
+
+	// Accepted inputs:
+	// !offlinectban <steamid>
+
+	if (args > 3) {
+
+		CReplyToCommand(client, CHAT_PREFIX ... "Usage: !offlinectban <steamid>");
+		return Plugin_Handled;
+
+	}
+
+	char arg1[120];
+	GetCmdArg(1, arg1, sizeof(arg1));
+
+	PerformOfflineCTBan(client, arg1);
+
+	return Plugin_Handled;
+
+}
+
 public Action CMD_RageCTBan(int client, int args) {
 
-	Menu menu = new Menu(CTBanLengthMenuHandler);
-	menu.SetTitle("Rage CT Ban\nChoose a Player:");
+	// Accepted inputs:
+	// !ragectban
 
-	char nameString[MAX_NAME_LENGTH+64];
+	if (!IsValidClient(client)) {
 
-	int count = 0;
-	for (int i = 0; i < g_iRageCount; i++) {
+		if (client == 0) {
 
-		Format(nameString, sizeof(nameString), "%s [%s]", g_iRageInfo[i][sName], g_iRageInfo[i][sSteam]);
-		menu.AddItem(g_iRageInfo[i][sSteam], nameString);
+			CReplyToCommand(client, CHAT_PREFIX ... "You must be in game to use this command");			
 
-	}
+		}
 
-	if (count == 0) {
-
-		CPrintToChat(client, CHAT_PREFIX ... "There are no players to rage CT Ban");
-		return;
+		return Plugin_Handled;
 
 	}
 
-	menu.Display(client, 0);	
+	RageCTBanMenu(client);
+
+	return Plugin_Handled;
 
 }
 
@@ -741,6 +772,25 @@ public int CTBanReasonMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 		PerformCTBan(param1, target, time, reasonString);
 		return;
+
+	}
+
+	if (action == MenuAction_End) {
+
+		delete menu;
+
+	}
+
+}
+
+public int RageCTBanMenuHandler(Menu menu, MenuAction action, int param1, int param2) {
+
+	if (action == MenuAction_Select) {
+
+		char steamid[64];
+		menu.GetItem(0, steamid, sizeof(steamid));
+
+		PerformOfflineCTBan(param1, steamid);
 
 	}
 
@@ -933,6 +983,32 @@ public void CTBanReasonMenu(int client, int target, int time) {
 
 }
 
+public void RageCTBanMenu(int client) {
+
+	Menu menu = new Menu(RageCTBanMenuHandler);
+	menu.SetTitle("Rage CT Ban\nChoose a Player:");
+
+	char nameString[MAX_NAME_LENGTH+64];
+
+	int count = 0;
+	for (int i = 0; i < g_iRageCount; i++) {
+
+		Format(nameString, sizeof(nameString), "%s [%s]", g_iRageInfo[i][sName], g_iRageInfo[i][sSteam]);
+		menu.AddItem(g_iRageInfo[i][sSteam], nameString);
+
+	}
+
+	if (count == 0) {
+
+		CPrintToChat(client, CHAT_PREFIX ... "There are no players to rage CT Ban");
+		return;
+
+	}
+
+	menu.Display(client, 0);	
+
+}
+
 public void PerformCTBan(int client, int target, int time, char[] reason) {
 
 	if (!IsValidClient(client)) {
@@ -1007,6 +1083,69 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 
 }
 
+public void PerformOfflineCTBan(int client, char[] targetSteamid) {
+
+	if (!IsValidClient(client)) {
+
+		return;
+
+	}
+
+	if (StrContains(targetSteamid, "STEAM_", false) == -1) {
+
+		CPrintToChat(client, CHAT_PREFIX ... "Invalid STEAMID (Ex: STEAM_1:)");
+		return;
+
+	}
+
+	// Make sure all the steamids are using the same format
+	ReplaceString(targetSteamid, 64, "STEAM_0:", "STEAM_1:", false);
+
+	// Check if client is on server
+	int target = -1;
+	char tempSteam[64];
+	for (int i; i < MaxClients; i++) {
+
+		GetClientAuthId(i, AuthId_Engine, tempSteam, sizeof(tempSteam));
+
+		if (StrEqual(targetSteamid, tempSteam)) {
+
+			target = i;
+			break;
+
+		}
+
+	}
+
+	if (IsValidClient(target)) {
+
+		CPrintToChat(client, CHAT_PREFIX ... "{purple}%N{default} is connected to the server, please use '!ctban %N'", target, target);
+		return;
+
+	}
+
+	char adminSteamid[64], adminName[MAX_NAME_LENGTH*2];
+
+	GetClientAuthId(client, AuthId_Engine, adminSteamid, sizeof(adminSteamid));
+	GetClientName(client, adminName, sizeof(adminName));
+
+	if (!SQL_EscapeString(g_hDB, targetSteamid, targetSteamid, 64)) {
+
+		CPrintToChat(client, CHAT_PREFIX ... "Failed to add ban");
+		LogError("(PerformOfflineCTBan) Failed to escape steamid: '%s'", targetSteamid);
+		return;
+
+	}
+
+	char query[512];
+	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, 0, 0, 'N', 'Breaking Rules')", targetSteamid, adminSteamid, adminName, GetTime());
+	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
+
+	CPrintToChat(client, CHAT_PREFIX ... "You have CT Banned {orange}%s{default} {red}permanently{default}", targetSteamid);
+	return;
+
+}
+
 public void FormatSeconds(int seconds, char[] str, int len, bool timeleft) {
 
 	if (seconds == 0) {
@@ -1050,7 +1189,9 @@ public void FormatSeconds(int seconds, char[] str, int len, bool timeleft) {
 public void ResetPlayer(int client) {
 
 	g_bAuthorized[client] = false;
+	g_bFirstSpawn[client] = false;
 
+	g_iBanInfo[client][iID] = 0;
 	g_iBanInfo[client][iCount] = 0;
 	g_iBanInfo[client][iCreated] = 0;
 	g_iBanInfo[client][iLength] = -1;
