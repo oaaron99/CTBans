@@ -1,7 +1,9 @@
 #include <sourcemod>
 #include <colors_csgo>
+#include <ctbans>
 
-#define CHAT_PREFIX "{green}[ {red}LG{green} ] {default}"
+//#define CHAT_PREFIX "{green}[ {red}LG{green} ] {default}"
+#define CHAT_PREFIX "{grey}[{default} {orange}PRG{default} {grey}]{default} "
 #define RAGE_MIN_LENGTH 10
 
 #define PRISONER_TEAM 2
@@ -69,6 +71,40 @@ public void OnPluginStart() {
 
 	// Load Translations
 	LoadTranslations("common.phrases");
+
+}
+
+// [ NATIVES ] //
+
+public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
+
+	// Register Natives
+	CreateNative("CTBans_IsCTBanned", Native_IsCTBanned);
+
+	// Register Library
+	RegPluginLibrary("CTBans");
+
+	return APLRes_Success;
+
+}
+
+public int Native_IsCTBanned(Handle plugin, int numParams) {
+
+	int client = GetNativeCell(1);
+
+	if (!IsValidClient(client)) {
+
+		return false;
+
+	}
+
+	if (g_iBanInfo[client][iTimeLeft] > -1) {
+
+		return true;
+
+	}
+
+	return false;
 
 }
 
@@ -528,7 +564,7 @@ public Action CMD_CTBan(int client, int args) {
 	int time = 0, end = strlen(arg2)-1;
 	if (IsCharNumeric(arg2[end])) {
 
-		time = StringToInt(arg2);
+		time = StringToInt(arg2) * 60;
 
 	} else if (arg2[end] == 's') {
 
@@ -905,7 +941,7 @@ public void CTBanPlayerMenu(int client) {
 
 		if (client == i) {
 
-			//continue;
+			continue;
 
 		}
 
@@ -926,7 +962,38 @@ public void CTBanPlayerMenu(int client) {
 
 		menu.AddItem(useridString, userName);
 
+		count++;
+
 	}
+
+	for (int i; i < MaxClients; i++) {
+	
+		if (!IsValidClient(i)) {
+	
+			continue;
+	
+		}
+
+		if (client == i) {
+
+			continue;
+
+		}
+
+		if (g_iBanInfo[i][iTimeLeft] > -1) {
+
+			continue;
+			
+		}
+
+		IntToString(GetClientUserId(i), useridString, sizeof(useridString));
+		GetClientName(i, userName, sizeof(userName));
+
+		menu.AddItem(useridString, userName);
+
+		count++;
+
+	}	
 
 	if (count == 0) {
 
@@ -995,6 +1062,8 @@ public void RageCTBanMenu(int client) {
 
 		Format(nameString, sizeof(nameString), "%s [%s]", g_iRageInfo[i][sName], g_iRageInfo[i][sSteam]);
 		menu.AddItem(g_iRageInfo[i][sSteam], nameString);
+
+		count++;
 
 	}
 
