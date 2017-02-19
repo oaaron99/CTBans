@@ -1,8 +1,7 @@
 #include <sourcemod>
 #include <colors_csgo>
+#include <emitsoundany>
 #include <ctbans>
-
-//#define g_sChatPrefix "{green}[ {red}LG{green} ] {default}"
 
 #define PRISONER_TEAM 2
 #define GUARD_TEAM 3
@@ -30,10 +29,14 @@ enum RageHandler {
 Handle g_hDB = null;
 Handle g_hCTBanTracker[MAXPLAYERS+1];
 
+ArrayList g_aReasons = null;
+
 ConVar g_cChatPrefix = null;
+ConVar g_cBlockSound = null;
 ConVar g_cRageLength = null;
 
-char g_sRestrictedSound[] = "buttons/button11.wav";
+char g_sReasonsPath[PLATFORM_MAX_PATH];
+char g_sBlockSound[PLATFORM_MAX_PATH];
 char g_sChatPrefix[32];
 
 bool g_bAuthorized[MAXPLAYERS+1];
@@ -75,7 +78,8 @@ public void OnPluginStart() {
 
 	// Create ConVars
 	g_cChatPrefix = CreateConVar("ctbans_chat_prefix", "[SM] ", "Chat prefix to use for all messages (Include space at end)"); 
-	g_cRageLength = CreateConVar("ctbans_rage_length", "10", "Amount of minutes to keep a player in the rage ct ban menu");
+	g_cBlockSound = CreateConVar("ctbans_block_sound", "buttons/button11.wav", "Sound to play to player when denied CT entry (Default included in CS:GO)");
+	g_cRageLength = CreateConVar("ctbans_rage_length", "10", "Amount of minutes to keep a player in the rage ct ban menu", _, true, 1.0);
 
 	AutoExecConfig(true, "ctbans");
 
@@ -83,7 +87,22 @@ public void OnPluginStart() {
 	g_cRageLength.AddChangeHook(OnConVarChanged);
 
 	g_cChatPrefix.GetString(g_sChatPrefix, sizeof(g_sChatPrefix));
+	g_cBlockSound.GetString(g_sBlockSound, sizeof(g_sBlockSound));
 	g_iRageLength = g_cRageLength.IntValue;
+
+	// Create Reasons Array
+	g_aReasons = new ArrayList(ByteCountToCells(120))
+
+	// Load Reasons
+	BuildPath(Path_SM, g_sReasonsPath, sizeof(g_sReasonsPath), "configs/ctbans_reasons.txt");
+
+	if (!FileExists(g_sReasonsPath)) {
+
+		SetFailState("Can't find config file 'ctbans_reasons.txt' in sourcemod/configs");
+
+	}
+
+	LoadReasons();
 
 	// Load Translations
 	LoadTranslations("common.phrases");
@@ -156,8 +175,7 @@ public void OnDatabaseConnected(Handle owner, Handle hndl, const char[] error, a
 	Format(query, sizeof(query), "%s `id` INT(12) NOT NULL AUTO_INCREMENT,", query);
 	Format(query, sizeof(query), "%s `perp_steamid` VARCHAR(64) NOT NULL,", query);
 	Format(query, sizeof(query), "%s `admin_steamid` VARCHAR(64) NOT NULL,", query);
-	Format(query, sizeof(query), "%s `admin_steamid` VARCHAR(64) NOT NULL,", query);
-	Format(query, sizeof(query), "%s `admin_name` VARCHAR(32) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT 'undefined' ,", query);
+	Format(query, sizeof(query), "%s `admin_name` VARCHAR(64) NOT NULL,", query);
 	Format(query, sizeof(query), "%s `created` INT(18) NOT NULL,", query);
 	Format(query, sizeof(query), "%s `length` INT(18) NOT NULL,", query);
 	Format(query, sizeof(query), "%s `timeleft` INT(18) NOT NULL,", query);
@@ -165,10 +183,10 @@ public void OnDatabaseConnected(Handle owner, Handle hndl, const char[] error, a
 	Format(query, sizeof(query), "%s `removed` VARCHAR(3) NOT NULL DEFAULT 'N',", query);
 	Format(query, sizeof(query), "%s PRIMARY KEY (`id`),", query);
 	Format(query, sizeof(query), "%s UNIQUE INDEX `id` (`id`))", query);
-	Format(query, sizeof(query), "%s COLLATE='utf8_general_ci' ENGINE=MyISAM; ", query);
-	//SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query);
+	Format(query, sizeof(query), "%s COLLATE='utf8_general_ci' ENGINE=MyISAM;", query);
+	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query);
 
-	for (int i; i < MaxClients; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 	
 		if (!IsValidClient(i)) {
 	
@@ -209,6 +227,8 @@ public void GetCTBanData(Handle owner, Handle hndl, const char[] error, any user
 
 	}
 
+	g_bAuthorized[client] = true;
+
 	if (!SQL_FetchRow(hndl)) {
 
 		return;
@@ -221,8 +241,6 @@ public void GetCTBanData(Handle owner, Handle hndl, const char[] error, any user
 	g_iBanInfo[client][iTimeLeft] = SQL_FetchInt(hndl, 3);
 	SQL_FetchString(hndl, 4, g_iBanInfo[client][sReason], 64);
 	SQL_FetchString(hndl, 5, g_iBanInfo[client][sAdmin], 120);
-
-	g_bAuthorized[client] = true;
 
 }
 
@@ -257,7 +275,7 @@ public void GetCTBanCount(Handle owner, Handle hndl, const char[] error, any use
 
 	}
 
-	for (int i; i < MaxClients; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 	
 		if (!IsValidClient(i)) {
 	
@@ -271,7 +289,7 @@ public void GetCTBanCount(Handle owner, Handle hndl, const char[] error, any use
 
 		}
 
-		CPrintToChat(i, "%sWARNING: {purple}%N{default} has {blue}%i{default} previous CT Bans", g_sChatPrefix, client, g_iBanInfo[client][iCount]);
+		CPrintToChat(i, "%sWARNING: {purple}%N{default} has {blue}%i{default} previous CT Ban%s", g_sChatPrefix, client, g_iBanInfo[client][iCount], g_iBanInfo[client][iCount] == 1 ? "" : "s");
 
 	}
 
@@ -291,7 +309,7 @@ public void OnMapStart() {
 
 	g_iRageCount = 0;
 
-	for (int i; i < MaxClients; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 	
 		if (!IsValidClient(i)) {
 	
@@ -302,6 +320,8 @@ public void OnMapStart() {
 		ResetPlayer(i);
 
 	}
+
+	PrecacheSoundAny(g_sBlockSound, true);
 
 }
 
@@ -373,13 +393,31 @@ public void OnClientDisconnect(int client) {
 
 	} else {
 
-		g_iRageInfo[g_iRageCount][iUserID] = GetClientUserId(client);
-		GetClientName(client, g_iRageInfo[g_iRageCount][sName], MAX_NAME_LENGTH);
-		strcopy(g_iRageInfo[g_iRageCount][sSteam], 64, steamid);
+		bool found = false;
+		for (int i = 0; i < g_iRageCount; i++) {
 
-		g_iRageCount++;
+			if (GetClientUserId(client) != g_iRageInfo[i][iUserID]) {
 
-		CreateTimer(g_iRageLength * 60.0, RemoveRageInfo_Timer,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+				continue;
+
+			}
+
+			found = true;
+			break;
+
+		}
+
+		if (!found) {
+
+			g_iRageInfo[g_iRageCount][iUserID] = GetClientUserId(client);
+			GetClientName(client, g_iRageInfo[g_iRageCount][sName], MAX_NAME_LENGTH);
+			strcopy(g_iRageInfo[g_iRageCount][sSteam], 64, steamid);
+
+			g_iRageCount++;
+
+			CreateTimer(g_iRageLength * 60.0, RemoveRageInfo_Timer,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+
+		}
 
 	}
 
@@ -407,7 +445,7 @@ public Action Event_OnJoinTeam(int client, const char[] szCommand, int iArgCount
 
 	if (team == 0) {
 
-		ClientCommand(client, "play %s", g_sRestrictedSound);
+		PlayBlockSound(client);
 		CPrintToChat(client, "%sYou cannot use auto select to join a team", g_sChatPrefix);
 		return Plugin_Handled;
 
@@ -421,13 +459,13 @@ public Action Event_OnJoinTeam(int client, const char[] szCommand, int iArgCount
 
 	if (!g_bAuthorized[client]) {
 
-		ClientCommand(client, "play %s", g_sRestrictedSound);
+		PlayBlockSound(client);
 		CPrintToChat(client, "%sYour CT Ban data has not been retrieved yet", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
 
-	ClientCommand(client, "play %s", g_sRestrictedSound);
+	PlayBlockSound(client);
 
 	char formattedLength[32], formattedTimeLeft[32];
 	FormatSeconds(g_iBanInfo[client][iLength], formattedLength, sizeof(formattedLength), false);
@@ -455,10 +493,18 @@ public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadca
 
 	}
 
-	if (!g_bFirstSpawn[client]) {
+	if (GetClientTeam(client) == GUARD_TEAM) {
+
+		PlayBlockSound(client);
+		ChangeClientTeam(client, PRISONER_TEAM);
+		return Plugin_Continue;
+
+	}
+
+	if (g_bFirstSpawn[client]) {
 
 		FakeClientCommand(client, "sm_isbanned");
-		g_bFirstSpawn[client] = true;
+		g_bFirstSpawn[client] = false;
 
 	}
 
@@ -960,12 +1006,12 @@ public Action RemoveRageInfo_Timer(Handle timer, int userid) {
 public void CTBanPlayerMenu(int client) {
 
 	Menu menu = new Menu(CTBanPlayerMenuHandler);
-	menu.SetTitle("CT Ban\nChoose a Player:");
+	menu.SetTitle("CT Ban\nChoose a Player:\n ");
 
 	char useridString[4], userName[MAX_NAME_LENGTH];
 
 	int count = 0;
-	for (int i; i < MaxClients; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 	
 		if (!IsValidClient(i)) {
 	
@@ -1000,7 +1046,7 @@ public void CTBanPlayerMenu(int client) {
 
 	}
 
-	for (int i; i < MaxClients; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 	
 		if (!IsValidClient(i)) {
 	
@@ -1036,6 +1082,7 @@ public void CTBanPlayerMenu(int client) {
 
 	}
 
+	menu.Pagination = 7;
 	menu.Display(client, 0);
 
 }
@@ -1043,7 +1090,7 @@ public void CTBanPlayerMenu(int client) {
 public void CTBanLengthMenu(int client, int target) {
 
 	Menu menu = new Menu(CTBanLengthMenuHandler);
-	menu.SetTitle("CT Ban\nChoose a Length:");
+	menu.SetTitle("CT Ban\nChoose a Length:\n ");
 
 	char useridString[4];
 	IntToString(GetClientUserId(target), useridString, sizeof(useridString));
@@ -1057,6 +1104,7 @@ public void CTBanLengthMenu(int client, int target) {
 	menu.AddItem("7200", "2 Hours");
 	menu.AddItem("14400", "4 Hours");
 
+	menu.Pagination = 7;
 	menu.Display(client, 0);
 
 }
@@ -1064,7 +1112,7 @@ public void CTBanLengthMenu(int client, int target) {
 public void CTBanReasonMenu(int client, int target, int time) {
 
 	Menu menu = new Menu(CTBanReasonMenuHandler);
-	menu.SetTitle("CT Ban\nChoose a Reason:");
+	menu.SetTitle("CT Ban\nChoose a Reason:\n ");
 
 	char useridString[4], timeString[12];
 	IntToString(GetClientUserId(target), useridString, sizeof(useridString));
@@ -1072,14 +1120,24 @@ public void CTBanReasonMenu(int client, int target, int time) {
 
 	menu.AddItem(useridString, "", ITEMDRAW_IGNORE);
 	menu.AddItem(timeString, "", ITEMDRAW_IGNORE);
-	menu.AddItem("", "Freekill Massacre");
-	menu.AddItem("", "Cheating / Exploiting");
-	menu.AddItem("", "Mic Spamming");
-	menu.AddItem("", "Poor Quality Mic");
-	menu.AddItem("", "Freekilling");
-	menu.AddItem("", "Gun Planting");
-	menu.AddItem("", "Breaking Rules");	
+	
+	char reason[120];
+	for (int i = 0; i < g_aReasons.Length; i++) {
 
+		g_aReasons.GetString(i, reason, sizeof(reason));
+		menu.AddItem("", reason);
+
+	}
+	
+	//menu.AddItem("", "Freekill Massacre");
+	//menu.AddItem("", "Cheating / Exploiting");
+	//menu.AddItem("", "Mic Spamming");
+	//menu.AddItem("", "Poor Quality Mic");
+	//menu.AddItem("", "Freekilling");
+	//menu.AddItem("", "Gun Planting");
+	//menu.AddItem("", "Breaking Rules");	
+
+	menu.Pagination = 7;
 	menu.Display(client, 0);
 
 }
@@ -1087,7 +1145,7 @@ public void CTBanReasonMenu(int client, int target, int time) {
 public void RageCTBanMenu(int client) {
 
 	Menu menu = new Menu(RageCTBanMenuHandler);
-	menu.SetTitle("Rage CT Ban\nChoose a Player:");
+	menu.SetTitle("Rage CT Ban\nChoose a Player:\n ");
 
 	char nameString[MAX_NAME_LENGTH+64];
 
@@ -1108,6 +1166,7 @@ public void RageCTBanMenu(int client) {
 
 	}
 
+	menu.Pagination = 7;
 	menu.Display(client, 0);	
 
 }
@@ -1207,7 +1266,7 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 	// Check if client is on server
 	int target = -1;
 	char tempSteam[64];
-	for (int i; i < MaxClients; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 
 		if (!IsValidClient(i)) {
 
@@ -1292,6 +1351,38 @@ public void FormatSeconds(int seconds, char[] str, int len, bool timeleft) {
 		Format(str, len, "for %s", str);
 
 	}
+
+}
+
+public void LoadReasons() {
+
+	File file = OpenFile(g_sReasonsPath, "r");
+
+	char line[120];
+	while (!file.EndOfFile()) {
+
+		file.ReadLine(line, sizeof(line));
+		TrimString(line);
+
+		if (strlen(line) == 0 || (line[0] == '/' && line[1] == '/')) {
+
+			continue;
+
+		}
+
+		g_aReasons.PushString(line);
+
+	}
+
+	delete file;
+
+}
+
+public void PlayBlockSound(int client) {
+
+	int clients[1];
+	clients[0] = client;
+	EmitSoundAny(clients, 1, g_sBlockSound);
 
 }
 
