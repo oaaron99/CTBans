@@ -2,9 +2,7 @@
 #include <colors_csgo>
 #include <ctbans>
 
-//#define CHAT_PREFIX "{green}[ {red}LG{green} ] {default}"
-#define CHAT_PREFIX "{grey}[{default} {orange}PRG{default} {grey}]{default} "
-#define RAGE_MIN_LENGTH 10
+//#define g_sChatPrefix "{green}[ {red}LG{green} ] {default}"
 
 #define PRISONER_TEAM 2
 #define GUARD_TEAM 3
@@ -32,7 +30,11 @@ enum RageHandler {
 Handle g_hDB = null;
 Handle g_hCTBanTracker[MAXPLAYERS+1];
 
+ConVar g_cChatPrefix = null;
+ConVar g_cRageLength = null;
+
 char g_sRestrictedSound[] = "buttons/button11.wav";
+char g_sChatPrefix[32];
 
 bool g_bAuthorized[MAXPLAYERS+1];
 bool g_bFirstSpawn[MAXPLAYERS+1];
@@ -40,13 +42,14 @@ bool g_bFirstSpawn[MAXPLAYERS+1];
 int g_iBanInfo[MAXPLAYERS+1][BanHandler];
 int g_iRageInfo[MAXPLAYERS+1][RageHandler];
 
+int g_iRageLength;
 int g_iRageCount;
 
 public Plugin myinfo = {
 
 	name = "CT Bans",
 	author = "Addicted",
-	version = "1.1",
+	version = "1.2",
 	url = "oaaron.com"
 
 };
@@ -69,7 +72,18 @@ public void OnPluginStart() {
 	RegAdminCmd("sm_offlinectban", CMD_OfflineCTBan, ADMFLAG_BAN);
 	RegAdminCmd("sm_ragectban", CMD_RageCTBan, ADMFLAG_BAN);
 
+	// Create ConVars
+	g_cChatPrefix = CreateConVar("ctbans_g_sChatPrefix", "[SM] ", "Chat prefix to use for all messages (Include space at end)"); 
+	g_cRageLength = CreateConVar("ctbans_rage_length", "10", "Amount of minutes to keep a player in the rage ct ban menu");
+
+	g_cChatPrefix.AddChangeHook(OnConVarChanged);
+	g_cRageLength.AddChangeHook(OnConVarChanged);
+
+	g_cChatPrefix.GetString(g_sChatPrefix, sizeof(g_sChatPrefix));
+	g_iRageLength = g_cRageLength.IntValue;
+
 	// Load Translations
+	LoadTranslations("ctbans.phrases");
 	LoadTranslations("common.phrases");
 
 }
@@ -255,7 +269,7 @@ public void GetCTBanCount(Handle owner, Handle hndl, const char[] error, any use
 
 		}
 
-		CPrintToChat(i, CHAT_PREFIX ... "WARNING: {purple}%N{default} has {blue}%i{default} previous CT Bans", client, g_iBanInfo[client][iCount]);
+		CPrintToChat(i, "%s%T", g_sChatPrefix, "Previous CT Bans", client, g_iBanInfo[client][iCount]);
 
 	}
 
@@ -361,7 +375,7 @@ public void OnClientDisconnect(int client) {
 
 		g_iRageCount++;
 
-		CreateTimer(RAGE_MIN_LENGTH * 60.0, RemoveRageInfo_Timer,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+		CreateTimer(g_iRageLength * 60.0, RemoveRageInfo_Timer,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
 
 	}
 
@@ -390,7 +404,7 @@ public Action Event_OnJoinTeam(int client, const char[] szCommand, int iArgCount
 	if (team == 0) {
 
 		ClientCommand(client, "play %s", g_sRestrictedSound);
-		CPrintToChat(client, CHAT_PREFIX ... "You cannot use auto select to join a team");
+		CPrintToChat(client, "%sYou cannot use auto select to join a team", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
@@ -404,7 +418,7 @@ public Action Event_OnJoinTeam(int client, const char[] szCommand, int iArgCount
 	if (!g_bAuthorized[client]) {
 
 		ClientCommand(client, "play %s", g_sRestrictedSound);
-		CPrintToChat(client, CHAT_PREFIX ... "Your CT Ban data has not been retrieved yet");
+		CPrintToChat(client, "%sYour CT Ban data has not been retrieved yet", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
@@ -415,7 +429,7 @@ public Action Event_OnJoinTeam(int client, const char[] szCommand, int iArgCount
 	FormatSeconds(g_iBanInfo[client][iLength], formattedLength, sizeof(formattedLength), false);
 	FormatSeconds(g_iBanInfo[client][iTimeLeft], formattedTimeLeft, sizeof(formattedTimeLeft), true);
 
-	CPrintToChat(client, CHAT_PREFIX ... "You are CT Banned %s by {purple}%s{default} for {orange}%s{default}. %s remaining", formattedLength, g_iBanInfo[client][sAdmin], g_iBanInfo[client][sReason], formattedTimeLeft);
+	CPrintToChat(client, "%sYou are CT Banned %s by {purple}%s{default} for {orange}%s{default}. %s remaining", g_sChatPrefix, formattedLength, g_iBanInfo[client][sAdmin], g_iBanInfo[client][sReason], formattedTimeLeft);
 
 	return Plugin_Handled;
 
@@ -457,6 +471,22 @@ public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadca
 
 }
 
+public void OnConVarChanged(ConVar convar, const char[] oldValue, const char[] newValue) {
+
+	if (convar == g_cChatPrefix) {
+
+		convar.GetString(g_sChatPrefix, sizeof(g_sChatPrefix));
+
+	}
+
+	if (convar == g_cRageLength) {
+
+		g_iRageLength = convar.IntValue;
+
+	}
+
+}
+
 // [ COMMAND CALLBACKS ] //
 
 public Action CMD_IsBanned(int client, int args) {
@@ -481,14 +511,14 @@ public Action CMD_IsBanned(int client, int args) {
 
 	if (!IsValidClient(target)) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Not a valid target");
+		CReplyToCommand(client, "%sNot a valid target", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
 
 	if (g_iBanInfo[target][iTimeLeft] < 0) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is not CT Banned", target);
+		CReplyToCommand(client, "%s{purple}%N{default} is not CT Banned", g_sChatPrefix, target);
 		return Plugin_Handled;
 
 	}
@@ -497,7 +527,7 @@ public Action CMD_IsBanned(int client, int args) {
 	FormatSeconds(g_iBanInfo[client][iLength], formattedLength, sizeof(formattedLength), false);
 	FormatSeconds(g_iBanInfo[client][iTimeLeft], formattedTimeLeft, sizeof(formattedTimeLeft), true);
 
-	CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is CT Banned %s by {purple}%s{default} for {orange}%s{default}. %s remaining", target, formattedLength, g_iBanInfo[target][sAdmin], g_iBanInfo[target][sReason], formattedTimeLeft);
+	CReplyToCommand(client, "%s{purple}%N{default} is CT Banned %s by {purple}%s{default} for {orange}%s{default}. %s remaining", g_sChatPrefix, target, formattedLength, g_iBanInfo[target][sAdmin], g_iBanInfo[target][sReason], formattedTimeLeft);
 	return Plugin_Handled;
 
 }
@@ -512,14 +542,14 @@ public Action CMD_CTBan(int client, int args) {
 
 	if (args > 3) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Usage: !ctban <player> <time> <reason>");
+		CReplyToCommand(client, "%sUsage: !ctban <player> <time> <reason>", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
 
 	if (args != 3 && client == 0) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Usage: !ctban <player> <time> <reason>");
+		CReplyToCommand(client, "%sUsage: !ctban <player> <time> <reason>", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
@@ -538,14 +568,14 @@ public Action CMD_CTBan(int client, int args) {
 
 	if (!IsValidClient(target)) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Not a valid target");
+		CReplyToCommand(client, "%sNot a valid target", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
 
 	if (g_iBanInfo[target][iTimeLeft] > -1) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is already CT Banned", target);
+		CReplyToCommand(client, "%s{purple}%N{default} is already CT Banned", g_sChatPrefix, target);
 		return Plugin_Handled;
 
 	}
@@ -595,7 +625,7 @@ public Action CMD_CTBan(int client, int args) {
 
 	if (time < 0) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Not a valid time");
+		CReplyToCommand(client, "%sNot a valid time", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
@@ -622,7 +652,7 @@ public Action CMD_UnCTBan(int client, int args) {
 
 	if (args != 1) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Usage: !unctban <player>");
+		CReplyToCommand(client, "%sUsage: !unctban <player>", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
@@ -634,14 +664,14 @@ public Action CMD_UnCTBan(int client, int args) {
 
 	if (!IsValidClient(target)) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Not a valid target");
+		CReplyToCommand(client, "%sNot a valid target", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
 
 	if (g_iBanInfo[target][iTimeLeft] < 0) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "{purple}%N{default} is not CT Banned", target);
+		CReplyToCommand(client, "%s{purple}%N{default} is not CT Banned", g_sChatPrefix, target);
 		return Plugin_Handled;
 
 	}
@@ -658,7 +688,7 @@ public Action CMD_UnCTBan(int client, int args) {
 	Format(g_iBanInfo[target][sAdmin], 64, "");
 	Format(g_iBanInfo[target][sReason], 120, "");
 
-	CPrintToChatAll(CHAT_PREFIX ... "{purple}%N{default} has removed {purple}%N's{default} CT Ban", client, target);
+	CPrintToChatAll("%s{purple}%N{default} has removed {purple}%N's{default} CT Ban", g_sChatPrefix, client, target);
 
 	return Plugin_Handled;
 
@@ -671,7 +701,7 @@ public Action CMD_OfflineCTBan(int client, int args) {
 
 	if (args > 3) {
 
-		CReplyToCommand(client, CHAT_PREFIX ... "Usage: !offlinectban <steamid>");
+		CReplyToCommand(client, "%sUsage: !offlinectban <steamid>", g_sChatPrefix);
 		return Plugin_Handled;
 
 	}
@@ -694,7 +724,7 @@ public Action CMD_RageCTBan(int client, int args) {
 
 		if (client == 0) {
 
-			CReplyToCommand(client, CHAT_PREFIX ... "You must be in game to use this command");			
+			CReplyToCommand(client, "%sYou must be in game to use this command", g_sChatPrefix);			
 
 		}
 
@@ -721,7 +751,7 @@ public int CTBanPlayerMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 		if (!IsValidClient(target)) {
 
-			CPrintToChat(param1, CHAT_PREFIX ... "Not a valid target");
+			CPrintToChat(param1, "%sNot a valid target", g_sChatPrefix);
 			return;
 
 		}
@@ -751,7 +781,7 @@ public int CTBanLengthMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 		if (!IsValidClient(target)) {
 
-			CPrintToChat(param1, CHAT_PREFIX ... "Not a valid target");
+			CPrintToChat(param1, "%sNot a valid target", g_sChatPrefix);
 			return;
 
 		}
@@ -760,7 +790,7 @@ public int CTBanLengthMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 		if (time < 0) {
 	
-			CPrintToChat(param1, CHAT_PREFIX ... "Not a valid time");
+			CPrintToChat(param1, "%sNot a valid time", g_sChatPrefix);
 			return;
 	
 		}
@@ -792,7 +822,7 @@ public int CTBanReasonMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 		if (!IsValidClient(target)) {
 
-			CPrintToChat(param1, CHAT_PREFIX ... "Not a valid target");
+			CPrintToChat(param1, "%sNot a valid target", g_sChatPrefix);
 			return;
 
 		}
@@ -801,7 +831,7 @@ public int CTBanReasonMenuHandler(Menu menu, MenuAction action, int param1, int 
 
 		if (time < 0) {
 	
-			CPrintToChat(param1, CHAT_PREFIX ... "Not a valid time");
+			CPrintToChat(param1, "%sNot a valid time", g_sChatPrefix);
 			return;
 	
 		}
@@ -887,7 +917,7 @@ public Action CTBanTracker_Timer(Handle timer, int userid) {
 		Format(g_iBanInfo[client][sAdmin], 64, "");
 		Format(g_iBanInfo[client][sReason], 120, "");
 
-		CPrintToChatAll(CHAT_PREFIX ... "{purple}%N's{default} CT Ban has expired", client);
+		CPrintToChatAll("%s{purple}%N's{default} CT Ban has expired", g_sChatPrefix, client);
 
 		g_hCTBanTracker[client] = null;
 		return Plugin_Stop;
@@ -997,7 +1027,7 @@ public void CTBanPlayerMenu(int client) {
 
 	if (count == 0) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "There are no players to CT Ban");
+		CPrintToChat(client, "%sThere are no players to CT Ban", g_sChatPrefix);
 		return;
 
 	}
@@ -1069,7 +1099,7 @@ public void RageCTBanMenu(int client) {
 
 	if (count == 0) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "There are no players to rage CT Ban");
+		CPrintToChat(client, "%sThere are no players to rage CT Ban", g_sChatPrefix);
 		return;
 
 	}
@@ -1088,21 +1118,21 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 
 	if (!IsValidClient(target)) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "Not a valid target");
+		CPrintToChat(client, "%sNot a valid target", g_sChatPrefix);
 		return;
 
 	}
 
 	if (g_iBanInfo[target][iTimeLeft] > -1) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "{purple}%N{default} is already CT Banned", target);
+		CPrintToChat(client, "%s{purple}%N{default} is already CT Banned", g_sChatPrefix, target);
 		return;
 
 	}
 
 	if (time < 0) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "Not a valid time");
+		CPrintToChat(client, "%sNot a valid time", g_sChatPrefix);
 		return;
 
 	}
@@ -1130,7 +1160,7 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 
 	if (!SQL_EscapeString(g_hDB, adminName, adminName, sizeof(adminName))) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "Failed to add ban");
+		CPrintToChat(client, "%sFailed to add ban", g_sChatPrefix);
 		LogError("(PerformCTBan) Failed to escape admin name: '%N'", client);
 		return;
 
@@ -1148,7 +1178,7 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 	
 	char formattedLength[32];
 	FormatSeconds(time, formattedLength, sizeof(formattedLength), false);
-	CPrintToChatAll(CHAT_PREFIX ... "{purple}%N{default} has CT Banned {purple}%N{default} %s for {orange}%s{default}", client, target, formattedLength, reason);
+	CPrintToChatAll("%s{purple}%N{default} has CT Banned {purple}%N{default} %s for {orange}%s{default}", g_sChatPrefix, client, target, formattedLength, reason);
 
 }
 
@@ -1162,7 +1192,7 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 
 	if (StrContains(targetSteamid, "STEAM_", false) == -1) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "Invalid STEAMID (Ex: STEAM_1:)");
+		CPrintToChat(client, "%sInvalid STEAMID (Ex: STEAM_1:)", g_sChatPrefix);
 		return;
 
 	}
@@ -1188,7 +1218,7 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 
 	if (IsValidClient(target)) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "{purple}%N{default} is connected to the server, please use '!ctban %N'", target, target);
+		CPrintToChat(client, "%s{purple}%N{default} is connected to the server, please use '!ctban %N'", g_sChatPrefix, target, target);
 		return;
 
 	}
@@ -1200,7 +1230,7 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 
 	if (!SQL_EscapeString(g_hDB, targetSteamid, targetSteamid, 64)) {
 
-		CPrintToChat(client, CHAT_PREFIX ... "Failed to add ban");
+		CPrintToChat(client,  "%sFailed to add ban", g_sChatPrefix);
 		LogError("(PerformOfflineCTBan) Failed to escape steamid: '%s'", targetSteamid);
 		return;
 
@@ -1210,7 +1240,7 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, 0, 0, 'N', 'Breaking Rules')", targetSteamid, adminSteamid, adminName, GetTime());
 	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
 
-	CPrintToChat(client, CHAT_PREFIX ... "You have CT Banned {orange}%s{default} {red}permanently{default}", targetSteamid);
+	CPrintToChat(client, "%sYou have CT Banned {orange}%s{default} {red}permanently{default}", g_sChatPrefix, targetSteamid);
 	return;
 
 }
