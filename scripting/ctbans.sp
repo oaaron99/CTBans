@@ -1135,7 +1135,7 @@ public void RageCTBanMenu(int client) {
 	Menu menu = new Menu(RageCTBanMenuHandler);
 	menu.SetTitle("Rage CT Ban\nChoose a Player:\n ");
 
-	char steamid[64], name[MAX_NAME_LENGTH], nameString[MAX_NAME_LENGTH+64];
+	char steamid[64], name[MAX_NAME_LENGTH], nameString[MAX_NAME_LENGTH+68];
 
 	int count = 0;
 	for (int i = 0; i < g_RageBans[0].Length; i++) {
