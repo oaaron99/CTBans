@@ -401,8 +401,8 @@ public void OnClientDisconnect(int client) {
 			char name[MAX_NAME_LENGTH];
 
 			g_RageBans[0].Push(GetClientUserId(client));
-			g_RageBans[1].PushString(name);
-			g_RageBans[2].PushString(steamid);			
+			g_RageBans[1].PushString(steamid);
+			g_RageBans[2].PushString(name);			
 
 			CreateTimer(g_iRageLength * 60.0, RemoveRageInfo_Timer,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
 
@@ -1141,7 +1141,7 @@ public void RageCTBanMenu(int client) {
 	for (int i = 0; i < g_RageBans[0].Length; i++) {
 
 		g_RageBans[1].GetString(i, steamid, sizeof(steamid));
-		g_RageBans[1].GetString(i, name, sizeof(name));
+		g_RageBans[2].GetString(i, name, sizeof(name));
 
 		Format(nameString, sizeof(nameString), "%s [%s]", name, steamid);
 		menu.AddItem(steamid, nameString);
