@@ -18,17 +18,10 @@ enum BanHandler {
 
 }
 
-enum RageHandler {
-
-	iUserID,
-	String:sName[MAX_NAME_LENGTH],
-	String:sSteam[64],
-
-}
-
 Handle g_hDB = null;
 Handle g_hCTBanTracker[MAXPLAYERS+1];
 
+ArrayList g_RageBans[3] = {null, ...};
 ArrayList g_aReasons = null;
 
 ConVar g_cChatPrefix = null;
@@ -43,16 +36,14 @@ bool g_bAuthorized[MAXPLAYERS+1];
 bool g_bFirstSpawn[MAXPLAYERS+1];
 
 int g_iBanInfo[MAXPLAYERS+1][BanHandler];
-int g_iRageInfo[MAXPLAYERS+1][RageHandler];
 
 int g_iRageLength;
-int g_iRageCount;
 
 public Plugin myinfo = {
 
 	name = "CT Bans",
 	author = "Addicted",
-	version = "1.4",
+	version = "1.5",
 	url = "addict.services"
 
 };
@@ -90,8 +81,13 @@ public void OnPluginStart() {
 	g_cBlockSound.GetString(g_sBlockSound, sizeof(g_sBlockSound));
 	g_iRageLength = g_cRageLength.IntValue;
 
+	// Create Rage Ban Arrays
+	g_RageBans[0] = new ArrayList();
+	g_RageBans[1] = new ArrayList(ByteCountToCells(64));
+	g_RageBans[2] = new ArrayList(ByteCountToCells(MAX_NAME_LENGTH));
+
 	// Create Reasons Array
-	g_aReasons = new ArrayList(ByteCountToCells(120))
+	g_aReasons = new ArrayList(ByteCountToCells(120));
 
 	// Load Reasons
 	BuildPath(Path_SM, g_sReasonsPath, sizeof(g_sReasonsPath), "configs/ctbans_reasons.txt");
@@ -299,15 +295,11 @@ public void GetCTBanCount(Handle owner, Handle hndl, const char[] error, any use
 
 public void OnMapStart() {
 
-	for (int i = 0; i < g_iRageCount; i++) {
+	for (int i = 0; i < 3; i++) {
 
-		g_iRageInfo[i][iUserID] = 0;
-		Format(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
-		Format(g_iRageInfo[i][sSteam], 64, "");
+		g_RageBans[i].Clear();
 
 	}
-
-	g_iRageCount = 0;
 
 	for (int i = 1; i <= MaxClients; i++) {
 	
@@ -353,20 +345,17 @@ public void OnClientPostAdminCheck(int client) {
 	Format(query, sizeof(query), "SELECT COUNT(*) FROM `ctbans` WHERE `perp_steamid` = '%s'", steamid);
 	SQL_TQuery(g_hDB, GetCTBanCount, query, userid, DBPrio_Low);
 
-	for (int i = 0; i < g_iRageCount; i++) {
+	for (int i = 0; i < g_RageBans[0].Length; i++) {
 
-		if (userid != g_iRageInfo[i][iUserID]) {
+		if (userid != g_RageBans[0].Get(i)) {
 
 			continue;
 
 		}
 
-		g_iRageInfo[i][iUserID] = 0;
-		Format(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
-		Format(g_iRageInfo[i][sSteam], 64, "");
-		g_iRageCount--;
-
-		PrintToChatAll("Removed rage info from %N", client);
+		g_RageBans[0].Erase(i);
+		g_RageBans[1].Erase(i);
+		g_RageBans[2].Erase(i);
 
 		break;
 
@@ -394,13 +383,13 @@ public void OnClientDisconnect(int client) {
 	} else {
 
 		bool found = false;
-		for (int i = 0; i < g_iRageCount; i++) {
+		for (int i = 0; i < g_RageBans[0].Length; i++) {
 
-			if (GetClientUserId(client) != g_iRageInfo[i][iUserID]) {
+			if (GetClientUserId(client) != g_RageBans[0].Get(i)) {
 
 				continue;
 
-			}
+			}		
 
 			found = true;
 			break;
@@ -409,11 +398,11 @@ public void OnClientDisconnect(int client) {
 
 		if (!found) {
 
-			g_iRageInfo[g_iRageCount][iUserID] = GetClientUserId(client);
-			GetClientName(client, g_iRageInfo[g_iRageCount][sName], MAX_NAME_LENGTH);
-			strcopy(g_iRageInfo[g_iRageCount][sSteam], 64, steamid);
+			char name[MAX_NAME_LENGTH];
 
-			g_iRageCount++;
+			g_RageBans[0].Push(GetClientUserId(client));
+			g_RageBans[1].PushString(name);
+			g_RageBans[2].PushString(steamid);			
 
 			CreateTimer(g_iRageLength * 60.0, RemoveRageInfo_Timer,  GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
 
@@ -980,18 +969,17 @@ public Action CTBanTracker_Timer(Handle timer, int userid) {
 
 public Action RemoveRageInfo_Timer(Handle timer, int userid) {
 
-	for (int i = 0; i < g_iRageCount; i++) {
+	for (int i = 0; i < g_RageBans[0].Length; i++) {
 
-		if (userid != g_iRageInfo[i][iUserID]) {
+		if (userid != g_RageBans[0].Get(i)) {
 
 			continue;
 
 		}
 
-		g_iRageInfo[i][iUserID] = 0;
-		Format(g_iRageInfo[i][sName], MAX_NAME_LENGTH, "");
-		Format(g_iRageInfo[i][sSteam], 64, "");
-		g_iRageCount--;
+		g_RageBans[0].Erase(i);
+		g_RageBans[1].Erase(i);
+		g_RageBans[2].Erase(i);
 
 		break;
 
@@ -1147,13 +1135,16 @@ public void RageCTBanMenu(int client) {
 	Menu menu = new Menu(RageCTBanMenuHandler);
 	menu.SetTitle("Rage CT Ban\nChoose a Player:\n ");
 
-	char nameString[MAX_NAME_LENGTH+64];
+	char steamid[64], name[MAX_NAME_LENGTH], nameString[MAX_NAME_LENGTH+64];
 
 	int count = 0;
-	for (int i = 0; i < g_iRageCount; i++) {
+	for (int i = 0; i < g_RageBans[0].Length; i++) {
 
-		Format(nameString, sizeof(nameString), "%s [%s]", g_iRageInfo[i][sName], g_iRageInfo[i][sSteam]);
-		menu.AddItem(g_iRageInfo[i][sSteam], nameString);
+		g_RageBans[1].GetString(i, steamid, sizeof(steamid));
+		g_RageBans[1].GetString(i, name, sizeof(name));
+
+		Format(nameString, sizeof(nameString), "%s [%s]", name, steamid);
+		menu.AddItem(steamid, nameString);
 
 		count++;
 
