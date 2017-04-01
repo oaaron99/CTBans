@@ -1034,35 +1034,6 @@ public void CTBanPlayerMenu(int client) {
 
 	}
 
-	for (int i = 1; i <= MaxClients; i++) {
-	
-		if (!IsValidClient(i)) {
-	
-			continue;
-	
-		}
-
-		if (client == i) {
-
-			continue;
-
-		}
-
-		if (g_iBanInfo[i][iTimeLeft] > -1) {
-
-			continue;
-			
-		}
-
-		IntToString(GetClientUserId(i), useridString, sizeof(useridString));
-		GetClientName(i, userName, sizeof(userName));
-
-		menu.AddItem(useridString, userName);
-
-		count++;
-
-	}	
-
 	if (count == 0) {
 
 		CPrintToChat(client, "%sThere are no players to CT Ban", g_sChatPrefix);
