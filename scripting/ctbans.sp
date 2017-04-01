@@ -1034,35 +1034,6 @@ public void CTBanPlayerMenu(int client) {
 
 	}
 
-	for (int i = 1; i <= MaxClients; i++) {
-	
-		if (!IsValidClient(i)) {
-	
-			continue;
-	
-		}
-
-		if (client == i) {
-
-			continue;
-
-		}
-
-		if (g_iBanInfo[i][iTimeLeft] > -1) {
-
-			continue;
-			
-		}
-
-		IntToString(GetClientUserId(i), useridString, sizeof(useridString));
-		GetClientName(i, userName, sizeof(userName));
-
-		menu.AddItem(useridString, userName);
-
-		count++;
-
-	}	
-
 	if (count == 0) {
 
 		CPrintToChat(client, "%sThere are no players to CT Ban", g_sChatPrefix);
@@ -1221,7 +1192,7 @@ public void PerformCTBan(int client, int target, int time, char[] reason) {
 	}
 
 	char query[512];
-	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, %i, %i, 'N', '%s')", targetSteamid, adminSteamid, adminName, g_iBanInfo[target][iCreated], time, time, g_iBanInfo[target][sReason]);
+	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, %i, %i, '%s', 'N')", targetSteamid, adminSteamid, adminName, g_iBanInfo[target][iCreated], time, time, g_iBanInfo[target][sReason]);
 	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
 
 	if (GetClientTeam(target) == GUARD_TEAM) {
@@ -1297,7 +1268,7 @@ public void PerformOfflineCTBan(int client, char[] targetSteamid) {
 	}
 
 	char query[512];
-	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, 0, 0, 'N', 'Breaking Rules')", targetSteamid, adminSteamid, adminName, GetTime());
+	Format(query, sizeof(query), "INSERT INTO `ctbans` VALUES (NULL, '%s', '%s', '%s', %i, 0, 0, 'Breaking Rules', 'N')", targetSteamid, adminSteamid, adminName, GetTime());
 	SQL_TQuery(g_hDB, SQL_ErrorCheckCallback, query, _, DBPrio_Low);
 
 	CPrintToChat(client, "%sYou have CT Banned {orange}%s{default} permanently", g_sChatPrefix, targetSteamid);
