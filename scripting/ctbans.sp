@@ -497,12 +497,7 @@ public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadca
 
 	}
 
-	if (g_hCTBanTracker[client] != null) {
-
-		KillTimer(g_hCTBanTracker[client]);
-		g_hCTBanTracker[client] = null;
-
-	}
+	delete g_hCTBanTracker[client]
 
 	g_hCTBanTracker[client] = CreateTimer(1.0, CTBanTracker_Timer, event.GetInt("userid"), TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
 
